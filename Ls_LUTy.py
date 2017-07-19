@@ -63,6 +63,7 @@ def makechart(sr, sg, sb, ids):
 	b = sb[ids]
 	return r, g, b
 
+# This holds all methods called by Flame
 class Ls_LUTy(pybox.BaseClass):
 	def initialize(self):
 		print("\n\nLs_LUTy: initialize")
@@ -72,19 +73,29 @@ class Ls_LUTy(pybox.BaseClass):
 		self.remove_in_socket(1)
 		self.set_out_socket(0, 'Result', '/tmp/Ls_LUTyresult.exr')
 		self.remove_out_socket(1)
-		self.add_global_elements(pybox.create_popup('Mode', ['Match Macbeth target image', 'Match synthetic Macbeth values'], row=1, col=0))
-		self.add_global_elements(pybox.create_toggle_button('Analyze', False, False, row=1, col=1))
+		self.set_ui_pages_array([pybox.create_page('Analyze'), pybox.create_page('Layout')])
+		self.add_global_elements(pybox.create_popup('Mode', ['Layout overlay', 'Match target Macbeth image'], row=1, col=0))
+		self.add_global_elements(pybox.create_toggle_button('Apply matrix', False, False, row=1, col=1))
 		self.add_global_elements(pybox.create_file_browser('Save in folder...', '/opt/Autodesk/project', 'ctf', '/opt/Autodesk/project', row=1, col=3))
 		self.add_global_elements(pybox.create_popup('Save format', ['CTF', 'Matchbox ColourMatrix', 'Nuke ColorMatrix', 'All available formats'], row=0, col=3))
-		self.set_ui_pages(pybox.create_page('Setup'))
+		self.add_global_elements(pybox.create_float_numeric('Rows', value=4.0, min=1.0, max=100.0, inc=1.0, page=1, row=1, col=0))
+		self.add_global_elements(pybox.create_float_numeric('Columns', value=6.0, min=1.0, max=100.0, inc=1.0, page=1, row=2, col=0))
+		self.add_global_elements(pybox.create_float_numeric('Squeeze X', value=25.0, min=0.0, max=1000.0, inc=1.0, page=1, row=1, col=1))
+		self.add_global_elements(pybox.create_float_numeric('Squeeze Y', value=95.0, min=0.0, max=1000.0, inc=1.0, page=1, row=2, col=1))
+		self.add_global_elements(pybox.create_float_numeric('Sample size', value=25.0, min=1.0, max=100.0, inc=1.0, page=1, row=1, col=2))
 		self.set_state_id('execute')
 
 	def execute(self):
 		print("Ls_LUTy: execute")
 
-		if(self.get_global_element_value('Analyze')):
+		if(self.get_global_element_value('Apply matrix')):
 			frontr, frontg, frontb = exr2arrays(self.get_in_socket_path(0))
-			ids = patchids(frontr.shape[1], frontr.shape[0], 0.4, 4, 6, 0.025, 0.095)
+			ids = patchids(frontr.shape[1], frontr.shape[0],
+			               self.get_global_element_value('Sample size') / 100.0,
+			               self.get_global_element_value('Rows'),
+			               self.get_global_element_value('Columns'),
+			               self.get_global_element_value('Squeeze X') / 1000.0,
+			               self.get_global_element_value('Squeeze Y') / 1000.0)
 			sr, sg, sb = samplechart(frontr, frontg, frontb, ids)
 			resultr, resultg, resultb = makechart(sr, sg, sb, ids)
 			arrays2exr(resultr, resultg, resultb, self.get_out_socket_path(0))
