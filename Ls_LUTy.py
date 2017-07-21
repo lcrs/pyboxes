@@ -1,4 +1,4 @@
-import os, sys, base64, zipfile
+import os, sys, base64, zipfile, uuid
 import pybox_v1 as pybox
 
 # Returns three numpy arrays from an EXR's RGB planes
@@ -69,8 +69,7 @@ class Ls_LUTy(pybox.BaseClass):
 		print("\n\nLs_LUTy: initialize")
 		self.set_img_format('exr')
 		self.set_in_socket(0, 'Front', '/tmp/Ls_LUTyfront.exr')
-		self.set_in_socket(1, 'Normal', '/tmp/Ls_LUTytarget.exr')
-		self.remove_in_socket(1)
+		self.set_in_socket(1, 'Back', '/tmp/Ls_LUTytarget.exr')
 		self.set_out_socket(0, 'Result', '/tmp/Ls_LUTyresult.exr')
 		self.remove_out_socket(1)
 		self.set_ui_pages_array([pybox.create_page('Analyze'), pybox.create_page('Layout')])
@@ -90,14 +89,28 @@ class Ls_LUTy(pybox.BaseClass):
 
 		if(self.get_global_element_value('Apply matrix')):
 			frontr, frontg, frontb = exr2arrays(self.get_in_socket_path(0))
+			targetr, targetg, targetb = exr2arrays(self.get_in_socket_path(1))
 			ids = patchids(frontr.shape[1], frontr.shape[0],
 			               self.get_global_element_value('Sample size') / 100.0,
 			               self.get_global_element_value('Rows'),
 			               self.get_global_element_value('Columns'),
 			               self.get_global_element_value('Squeeze X') / 1000.0,
 			               self.get_global_element_value('Squeeze Y') / 1000.0)
-			sr, sg, sb = samplechart(frontr, frontg, frontb, ids)
-			resultr, resultg, resultb = makechart(sr, sg, sb, ids)
+			fr, fg, fb = samplechart(frontr, frontg, frontb, ids)
+			tr, tg, tb = samplechart(targetr, targetg, targetb, ids)
+			fp = zip(fr, fg, fb)
+			tp = zip(tr, tg, tb)
+
+			# Sanitize patch samples - remove id 0 which is chart background and clipped colours
+
+			mat = numpy.linalg.lstsq(fp, tp)[0].transpose()
+			nukecolormatrix = 'ColorMatrix {\n matrix { {%f %f %f} {%f %f %f} {%f %f %f} }\n label "Created from\\ncolour chart\\nby Ls_LUTy"\n}\n' % tuple(mat.ravel())
+			ctf = '<?xml version="1.0" encoding="UTF-8"?>\n<ProcessList id="%s" version="1.2">\n    <Description>Matrix created from colour chart by Ls_LUTy</Description>\n    <Matrix inBitDepth="16f" outBitDepth="16f">\n        <Array dim="3 3 3">\n %f %f %f\n %f %f %f\n %f %f %f\n        </Array>\n    </Matrix>\n</ProcessList>\n' % ((str(uuid.uuid4()),) + tuple(mat.ravel()))
+			f = open(self.get_global_element_value('Save in folder...') + '/Ls_LUTy_matrix.ctf', 'w')
+			f.write(ctf)
+			f.close()
+
+			resultr, resultg, resultb = makechart(fr, fg, fb, ids)
 			arrays2exr(resultr, resultg, resultb, self.get_out_socket_path(0))
 		else:
 			if(os.path.lexists(self.get_out_socket_path(0))):
