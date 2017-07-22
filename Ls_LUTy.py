@@ -79,10 +79,11 @@ class Ls_LUTy(pybox.BaseClass):
 		self.set_out_socket(0, 'Result', '/tmp/Ls_LUTyresult.exr')
 		self.remove_out_socket(1)
 		self.set_ui_pages_array([pybox.create_page('Analyze'), pybox.create_page('Layout')])
-		self.add_global_elements(pybox.create_popup('Mode', ['Make 3x3 matrix matching front to back', 'Do nothing'], row=1, col=0))
-		self.add_global_elements(pybox.create_popup('Output', ['Chart layout', 'Sampled front patches', 'Sampled back patches'], row=1, col=1))
-		self.add_global_elements(pybox.create_file_browser('Save in folder...', '/opt/Autodesk/project', 'ctf', '/opt/Autodesk/project', row=1, col=3))
+		self.add_global_elements(pybox.create_popup('Mode', ['Find 3x3 matrix matching front to back', 'Do nothing'], row=1, col=0))
+		self.add_global_elements(pybox.create_popup('Output', ['Chart layout', 'Sampled front patches', 'Sampled back patches'], row=1, col=2))
 		self.add_global_elements(pybox.create_popup('Save format', ['Flame CTF', 'Nuke ColorMatrix', 'All available formats'], row=0, col=3))
+		self.add_global_elements(pybox.create_toggle_button('Save in /tmp', False, False, row=1, col=3))
+		self.add_global_elements(pybox.create_toggle_button('Save in project/synColor', False, False, row=2, col=3))
 		self.add_global_elements(pybox.create_float_numeric('Rows', value=4.0, min=1.0, max=100.0, inc=1.0, page=1, row=1, col=0))
 		self.add_global_elements(pybox.create_float_numeric('Columns', value=6.0, min=1.0, max=100.0, inc=1.0, page=1, row=2, col=0))
 		self.add_global_elements(pybox.create_float_numeric('Squeeze X', value=25.0, min=0.0, max=1000.0, inc=1.0, page=1, row=1, col=1))
@@ -91,11 +92,6 @@ class Ls_LUTy(pybox.BaseClass):
 		self.set_state_id('execute')
 
 	def execute(self):
-		output = self.get_global_element_value('Output')
-		savepressed = False
-		for e in self.get_ui_changes():
-			if(e['name'] == 'Save in folder...'):
-				savepressed = True
 
 		# Read inputs
 		frontr, frontg, frontb = exr2arrays(self.get_in_socket_path(0))
@@ -131,21 +127,39 @@ class Ls_LUTy(pybox.BaseClass):
 		# Solve for a 3x3 matrix
 		mat = numpy.linalg.lstsq(frontvalidpatches, targetvalidpatches)[0].transpose()
 		
+		# Save files
+		savepressed = False
+		savefolder = ''
+		for e in self.get_ui_changes():
+			if(e['name'] == 'Save in /tmp'):
+				savepressed = True
+				savefolder = '/tmp'
+				self.set_global_element_value('Save in /tmp', False)
+			if(e['name'] == 'Save in project/synColor'):
+				savepressed = True
+				savefolder = '/opt/Autodesk/project/%s/synColor/transforms' % self.get_project()
+				self.set_global_element_value('Save in project/synColor', False)
 		if(savepressed):
 			# Write the solved matrix out to files
 			sformat = self.get_global_element_value('Save format')
 			if(sformat == 0 or sformat == 2):
 				# CTF
 				ctf = '<?xml version="1.0" encoding="UTF-8"?>\n<ProcessList id="%s" version="1.2">\n    <Description>Matrix created from colour chart by Ls_LUTy</Description>\n    <Matrix inBitDepth="16f" outBitDepth="16f">\n        <Array dim="3 3 3">\n %f %f %f\n %f %f %f\n %f %f %f\n        </Array>\n    </Matrix>\n</ProcessList>\n' % ((str(uuid.uuid4()),) + tuple(mat.ravel()))
-				f = open(self.get_global_element_value('Save in folder...') + '/Ls_LUTy_matrix.ctf', 'w')
+				p = savefolder + '/Ls_LUTy_matrix.ctf'
+				f = open(p, 'w')
 				f.write(ctf)
 				f.close()
+				print "Ls_LUTy: saved matrix as %s" % p
 			if(sformat == 1 or sformat == 2):
 				nukecolormatrix = 'ColorMatrix {\n matrix { {%f %f %f} {%f %f %f} {%f %f %f} }\n label "Created from\\ncolour chart\\nby Ls_LUTy"\n}\n' % tuple(mat.ravel())
-				f = open(self.get_global_element_value('Save in folder...') + '/Ls_LUTy_matrix.nk', 'w')
+				p = savefolder + '/Ls_LUTy_matrix.nk'
+				f = open(p, 'w')
 				f.write(nukecolormatrix)
 				f.close()
+				print "Ls_LUTy: saved matrix as %s" % p
 
+		# Output image
+		output = self.get_global_element_value('Output')
 		if(output == 0):
 			# Chart layout
 			overlay = numpy.clip(ids, 0.0, 0.2);
