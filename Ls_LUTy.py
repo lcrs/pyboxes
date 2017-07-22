@@ -73,8 +73,8 @@ class Ls_LUTy(pybox.BaseClass):
 		self.set_out_socket(0, 'Result', '/tmp/Ls_LUTyresult.exr')
 		self.remove_out_socket(1)
 		self.set_ui_pages_array([pybox.create_page('Analyze'), pybox.create_page('Layout')])
-		self.add_global_elements(pybox.create_popup('Mode', ['Layout overlay', 'Match target Macbeth image'], row=1, col=0))
-		self.add_global_elements(pybox.create_toggle_button('Apply matrix', False, False, row=1, col=1))
+		self.add_global_elements(pybox.create_popup('Mode', ['Find 3x3 matrix to match target chart'], row=1, col=0))
+		self.add_global_elements(pybox.create_popup('Output', ['Chart layout', 'Sampled front patches', 'Sampled target patches'], row=1, col=1))
 		self.add_global_elements(pybox.create_file_browser('Save in folder...', '/opt/Autodesk/project', 'ctf', '/opt/Autodesk/project', row=1, col=3))
 		self.add_global_elements(pybox.create_popup('Save format', ['CTF', 'Matchbox ColourMatrix', 'Nuke ColorMatrix', 'All available formats'], row=0, col=3))
 		self.add_global_elements(pybox.create_float_numeric('Rows', value=4.0, min=1.0, max=100.0, inc=1.0, page=1, row=1, col=0))
@@ -87,32 +87,62 @@ class Ls_LUTy(pybox.BaseClass):
 	def execute(self):
 		print("Ls_LUTy: execute")
 
-		if(self.get_global_element_value('Apply matrix')):
-			frontr, frontg, frontb = exr2arrays(self.get_in_socket_path(0))
-			targetr, targetg, targetb = exr2arrays(self.get_in_socket_path(1))
-			ids = patchids(frontr.shape[1], frontr.shape[0],
-			               self.get_global_element_value('Sample size') / 100.0,
-			               self.get_global_element_value('Rows'),
-			               self.get_global_element_value('Columns'),
-			               self.get_global_element_value('Squeeze X') / 1000.0,
-			               self.get_global_element_value('Squeeze Y') / 1000.0)
-			fr, fg, fb = samplechart(frontr, frontg, frontb, ids)
-			tr, tg, tb = samplechart(targetr, targetg, targetb, ids)
-			fp = zip(fr, fg, fb)
-			tp = zip(tr, tg, tb)
+		output = self.get_global_element_value('Output')
+		savepressed = False
+		for e in self.get_ui_changes():
+			if(e['name'] == 'Save in folder...'):
+				savepressed = True
 
-			# Sanitize patch samples - remove id 0 which is chart background and clipped colours
-
-			mat = numpy.linalg.lstsq(fp, tp)[0].transpose()
+		frontr, frontg, frontb = exr2arrays(self.get_in_socket_path(0))
+		targetr, targetg, targetb = exr2arrays(self.get_in_socket_path(1))
+		ids = patchids(frontr.shape[1], frontr.shape[0],
+					   self.get_global_element_value('Sample size') / 100.0,
+					   self.get_global_element_value('Rows'),
+					   self.get_global_element_value('Columns'),
+					   self.get_global_element_value('Squeeze X') / 1000.0,
+					   self.get_global_element_value('Squeeze Y') / 1000.0)
+		fr, fg, fb = samplechart(frontr, frontg, frontb, ids)
+		tr, tg, tb = samplechart(targetr, targetg, targetb, ids)
+		frontsamples = zip(fr, fg, fb)
+		targetsamples = zip(tr, tg, tb)
+		frontvalidpatches = []
+		targetvalidpatches = []
+		rejects = 0
+		for i in range(1, len(frontsamples)):
+			if(i == 0):
+				continue # ID 0 is all pixels not in a patch
+			if(min(frontsamples[i] + targetsamples[i]) <= 0.0):
+				rejects = rejects + 1
+				continue # This patch is clipped
+			frontvalidpatches.append(frontsamples[i])
+			targetvalidpatches.append(targetsamples[i])
+		mat = numpy.linalg.lstsq(frontvalidpatches, targetvalidpatches)[0].transpose()
+		
+		if(savepressed):
+			# Write the solved matrix out to files
 			nukecolormatrix = 'ColorMatrix {\n matrix { {%f %f %f} {%f %f %f} {%f %f %f} }\n label "Created from\\ncolour chart\\nby Ls_LUTy"\n}\n' % tuple(mat.ravel())
 			ctf = '<?xml version="1.0" encoding="UTF-8"?>\n<ProcessList id="%s" version="1.2">\n    <Description>Matrix created from colour chart by Ls_LUTy</Description>\n    <Matrix inBitDepth="16f" outBitDepth="16f">\n        <Array dim="3 3 3">\n %f %f %f\n %f %f %f\n %f %f %f\n        </Array>\n    </Matrix>\n</ProcessList>\n' % ((str(uuid.uuid4()),) + tuple(mat.ravel()))
 			f = open(self.get_global_element_value('Save in folder...') + '/Ls_LUTy_matrix.ctf', 'w')
 			f.write(ctf)
 			f.close()
 
+		if(output == 0):
+			# Chart layout
+			overlay = numpy.clip(ids, 0.0, 0.2);
+			resultr = frontr + overlay
+			resultg = frontg + overlay
+			resultb = frontb + overlay
+			arrays2exr(resultr, resultg, resultb, self.get_out_socket_path(0))
+		elif(output == 1):
+			# Patches sampled from front input
 			resultr, resultg, resultb = makechart(fr, fg, fb, ids)
 			arrays2exr(resultr, resultg, resultb, self.get_out_socket_path(0))
+		elif(output == 2):
+			# Patches sampled from target input
+			resultr, resultg, resultb = makechart(tr, tg, tb, ids)
+			arrays2exr(resultr, resultg, resultb, self.get_out_socket_path(0))
 		else:
+			# Pass the front through by symlinking the result file to it
 			if(os.path.lexists(self.get_out_socket_path(0))):
 				os.unlink(self.get_out_socket_path(0))
 			os.symlink(self.get_in_socket_path(0), self.get_out_socket_path(0))
