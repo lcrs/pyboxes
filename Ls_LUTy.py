@@ -1,3 +1,7 @@
+# Pybox which samples colours from charts and builds LUTs
+# Currently creates a 3x3 matrix to match the front chart to the target
+# lewis@lewissaunders.com
+
 import os, sys, base64, zipfile, uuid
 import pybox_v1 as pybox
 
@@ -66,17 +70,19 @@ def makechart(sr, sg, sb, ids):
 # This holds all methods called by Flame
 class Ls_LUTy(pybox.BaseClass):
 	def initialize(self):
-		print("\n\nLs_LUTy: initialize")
 		self.set_img_format('exr')
+		self.remove_in_socket(2)
+		self.remove_in_socket(1)
+		self.remove_in_socket(0)
 		self.set_in_socket(0, 'Front', '/tmp/Ls_LUTyfront.exr')
 		self.set_in_socket(1, 'Back', '/tmp/Ls_LUTytarget.exr')
 		self.set_out_socket(0, 'Result', '/tmp/Ls_LUTyresult.exr')
 		self.remove_out_socket(1)
 		self.set_ui_pages_array([pybox.create_page('Analyze'), pybox.create_page('Layout')])
-		self.add_global_elements(pybox.create_popup('Mode', ['Find 3x3 matrix to match target chart'], row=1, col=0))
-		self.add_global_elements(pybox.create_popup('Output', ['Chart layout', 'Sampled front patches', 'Sampled target patches'], row=1, col=1))
+		self.add_global_elements(pybox.create_popup('Mode', ['Make 3x3 matrix matching front to back', 'Do nothing'], row=1, col=0))
+		self.add_global_elements(pybox.create_popup('Output', ['Chart layout', 'Sampled front patches', 'Sampled back patches'], row=1, col=1))
 		self.add_global_elements(pybox.create_file_browser('Save in folder...', '/opt/Autodesk/project', 'ctf', '/opt/Autodesk/project', row=1, col=3))
-		self.add_global_elements(pybox.create_popup('Save format', ['CTF', 'Matchbox ColourMatrix', 'Nuke ColorMatrix', 'All available formats'], row=0, col=3))
+		self.add_global_elements(pybox.create_popup('Save format', ['Flame CTF', 'Nuke ColorMatrix', 'All available formats'], row=0, col=3))
 		self.add_global_elements(pybox.create_float_numeric('Rows', value=4.0, min=1.0, max=100.0, inc=1.0, page=1, row=1, col=0))
 		self.add_global_elements(pybox.create_float_numeric('Columns', value=6.0, min=1.0, max=100.0, inc=1.0, page=1, row=2, col=0))
 		self.add_global_elements(pybox.create_float_numeric('Squeeze X', value=25.0, min=0.0, max=1000.0, inc=1.0, page=1, row=1, col=1))
@@ -85,26 +91,31 @@ class Ls_LUTy(pybox.BaseClass):
 		self.set_state_id('execute')
 
 	def execute(self):
-		print("Ls_LUTy: execute")
-
 		output = self.get_global_element_value('Output')
 		savepressed = False
 		for e in self.get_ui_changes():
 			if(e['name'] == 'Save in folder...'):
 				savepressed = True
 
+		# Read inputs
 		frontr, frontg, frontb = exr2arrays(self.get_in_socket_path(0))
 		targetr, targetg, targetb = exr2arrays(self.get_in_socket_path(1))
+
+		# Build chart layout array
 		ids = patchids(frontr.shape[1], frontr.shape[0],
 					   self.get_global_element_value('Sample size') / 100.0,
 					   self.get_global_element_value('Rows'),
 					   self.get_global_element_value('Columns'),
 					   self.get_global_element_value('Squeeze X') / 1000.0,
 					   self.get_global_element_value('Squeeze Y') / 1000.0)
+
+		# Sample inputs according to chart layout
 		fr, fg, fb = samplechart(frontr, frontg, frontb, ids)
 		tr, tg, tb = samplechart(targetr, targetg, targetb, ids)
 		frontsamples = zip(fr, fg, fb)
 		targetsamples = zip(tr, tg, tb)
+
+		# Validate lists of front/target colours to solve from
 		frontvalidpatches = []
 		targetvalidpatches = []
 		rejects = 0
@@ -116,15 +127,24 @@ class Ls_LUTy(pybox.BaseClass):
 				continue # This patch is clipped
 			frontvalidpatches.append(frontsamples[i])
 			targetvalidpatches.append(targetsamples[i])
+
+		# Solve for a 3x3 matrix
 		mat = numpy.linalg.lstsq(frontvalidpatches, targetvalidpatches)[0].transpose()
 		
 		if(savepressed):
 			# Write the solved matrix out to files
-			nukecolormatrix = 'ColorMatrix {\n matrix { {%f %f %f} {%f %f %f} {%f %f %f} }\n label "Created from\\ncolour chart\\nby Ls_LUTy"\n}\n' % tuple(mat.ravel())
-			ctf = '<?xml version="1.0" encoding="UTF-8"?>\n<ProcessList id="%s" version="1.2">\n    <Description>Matrix created from colour chart by Ls_LUTy</Description>\n    <Matrix inBitDepth="16f" outBitDepth="16f">\n        <Array dim="3 3 3">\n %f %f %f\n %f %f %f\n %f %f %f\n        </Array>\n    </Matrix>\n</ProcessList>\n' % ((str(uuid.uuid4()),) + tuple(mat.ravel()))
-			f = open(self.get_global_element_value('Save in folder...') + '/Ls_LUTy_matrix.ctf', 'w')
-			f.write(ctf)
-			f.close()
+			sformat = self.get_global_element_value('Save format')
+			if(sformat == 0 or sformat == 2):
+				# CTF
+				ctf = '<?xml version="1.0" encoding="UTF-8"?>\n<ProcessList id="%s" version="1.2">\n    <Description>Matrix created from colour chart by Ls_LUTy</Description>\n    <Matrix inBitDepth="16f" outBitDepth="16f">\n        <Array dim="3 3 3">\n %f %f %f\n %f %f %f\n %f %f %f\n        </Array>\n    </Matrix>\n</ProcessList>\n' % ((str(uuid.uuid4()),) + tuple(mat.ravel()))
+				f = open(self.get_global_element_value('Save in folder...') + '/Ls_LUTy_matrix.ctf', 'w')
+				f.write(ctf)
+				f.close()
+			if(sformat == 1 or sformat == 2):
+				nukecolormatrix = 'ColorMatrix {\n matrix { {%f %f %f} {%f %f %f} {%f %f %f} }\n label "Created from\\ncolour chart\\nby Ls_LUTy"\n}\n' % tuple(mat.ravel())
+				f = open(self.get_global_element_value('Save in folder...') + '/Ls_LUTy_matrix.nk', 'w')
+				f.write(nukecolormatrix)
+				f.close()
 
 		if(output == 0):
 			# Chart layout
