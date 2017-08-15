@@ -6,24 +6,30 @@
 import os, sys
 nukebin = '/Applications/Nuke10.5v5/Nuke10.5v5.app/Contents/MacOS/Nuke10.5v5'
 frontreadyfifo = '/tmp/Ls_nukeBLGfrontready'
+framefile = '/tmp/Ls_nukeBLGframe'
 resultreadyfifo = '/tmp/Ls_nukeBLGresultready'
 blg = '/tmp/Ls_nukeBLG.blg.exr'
 
 if('nuke' in sys.modules):
 	# We're being run from the Nuke process - set up the tree
 	r = nuke.createNode('Read', 'file /tmp/Ls_nukeBLGfront.exr', False)
+	f = nuke.createNode('FrameRange', 'first_frame 1 last_frame 999999', False)
 	b = nuke.createNode('Baselight', '', False)
 	w = nuke.createNode('Write', 'file /tmp/Ls_nukeBLGresult.exr', False)
 	while(True):
 		# Block waiting for the fifo to be opened by Flame, render, then open the other fifo to signal back
 		open(frontreadyfifo, 'r').close()
+		ff = open(framefile, 'r')
+		frame = int(ff.read())
+		ff.close()
 		r.knob('reload').execute()
 		if(os.path.exists(blg)):
 			b.knob('blg_file').setValue(blg)
 		else:
 			b.knob('blg_file').setValue('')
 		b.knob('reload').execute()
-		nuke.execute(w, 1, 1)
+		nuke.execute(w, frame, frame)
+		print "Ls_nukeBLG: rendered frame %04d" % frame
 		open(resultreadyfifo, 'w').close()
 
 import pybox_v1 as pybox
@@ -59,6 +65,11 @@ class nukeBLG(pybox.BaseClass):
 				# Link the chosen BLG file into /tmp for Nuke to pick up
 				os.system('ln -sf "' + newblg + '" ' + blg)
 				return
+		# Write the frame number to disk so Nuke can pick it up
+		frame = self.get_frame()
+		f = open(framefile, 'w')
+		f.write(str(frame))
+		f.close()
 		# Hit the fifo to wake our Nuke up, then wait for the signal that it's done
 		open(frontreadyfifo, 'w').close()
 		open(resultreadyfifo, 'r').close()
