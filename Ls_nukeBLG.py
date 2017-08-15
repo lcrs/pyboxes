@@ -1,10 +1,10 @@
 # This is a Flame Pybox handler which applies a Baselight BLG grade
 # It spawns a Nuke process which uses the Baselight Editions plugin
-# WIP for PR80.1, 20170518
+# 
 # lewis@lewissaunders.com
 
 import os, sys
-nukebin = '/Applications/Nuke10.5v4/Nuke10.5v4.app/Contents/MacOS/Nuke10.5v4'
+nukebin = '/Applications/Nuke10.5v5/Nuke10.5v5.app/Contents/MacOS/Nuke10.5v5'
 frontreadyfifo = '/tmp/Ls_nukeBLGfrontready'
 resultreadyfifo = '/tmp/Ls_nukeBLGresultready'
 blg = '/tmp/Ls_nukeBLG.blg.exr'
